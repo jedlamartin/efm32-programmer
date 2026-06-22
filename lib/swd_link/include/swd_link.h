@@ -6,18 +6,26 @@
 #include <type_traits>
 
 #include "driver/gpio.h"
+#include "pin_config.h"
 #include "soc/gpio_struct.h"
-
-constexpr gpio_num_t PIN_SWDIO = GPIO_NUM_0;
-constexpr gpio_num_t PIN_SWCLK = GPIO_NUM_1;
 
 /**
  * @brief Represents physical wire ownership of the bi-directional SWDIO line.
  */
-typedef enum {
+enum swd_dir_t {
     SWD_DIR_HOST = 0,     // ESP32 is driving the line (Output)
     SWD_DIR_TARGET = 1    // Target Gecko is driving the line (Input to ESP32)
-} swd_dir_t;
+};
+
+/**
+ * @brief SWD Response ACK codes returned by the target.
+ * Defined by the ARM Debug Interface (ADIv5) specification.
+ */
+enum swd_ack_t {
+    SWD_ACK_OK = 0x01,      // Target successfully accepted the transaction
+    SWD_ACK_WAIT = 0x02,    // Target is busy, transaction must be retried
+    SWD_ACK_FAULT = 0x04    // Protocol or parity error, sticky fault set
+};
 
 /**
  * @brief Encapsulates a complete Serial Wire Debug transaction frame.
@@ -29,16 +37,6 @@ struct swd_frame_t {
     uint32_t data;    // Read destination or Write source payload
     swd_ack_t ack;    // Target response status populated during transaction
     bool parity_error;    // Flagged true if a data phase parity check fails
-};
-
-/**
- * @brief SWD Response ACK codes returned by the target.
- * Defined by the ARM Debug Interface (ADIv5) specification.
- */
-enum swd_ack_t {
-    SWD_ACK_OK = 0x01,      // Target successfully accepted the transaction
-    SWD_ACK_WAIT = 0x02,    // Target is busy, transaction must be retried
-    SWD_ACK_FAULT = 0x04    // Protocol or parity error, sticky fault set
 };
 
 // ============================================================================
@@ -127,5 +125,8 @@ bool swd_write_ap(uint8_t addr, uint32_t value);
  * @return true if the clear operation succeeded.
  */
 bool swd_clear_errors(void);
+
+bool swd_write_mem32(uint32_t address, uint32_t value);
+bool swd_read_mem32(uint32_t address, uint32_t* value);
 
 #endif    // SWD_LINK_H

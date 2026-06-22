@@ -195,3 +195,101 @@ bool swd_transaction(swd_frame_t* frame) {
 
     return true;
 }
+
+bool swd_read_dp(uint8_t addr, uint32_t* value) {
+    swd_frame_t frame {.is_ap = false,
+                       .is_read = true,
+                       .addr = addr,
+                       .data = 0,
+                       .ack = SWD_ACK_WAIT,
+                       .parity_error = false};
+
+    if(swd_transaction(&frame)) {
+        if(value) *value = frame.data;
+        return true;
+    }
+    return false;
+}
+
+bool swd_write_dp(uint8_t addr, uint32_t value) {
+    swd_frame_t frame {.is_ap = false,
+                       .is_read = false,
+                       .addr = addr,
+                       .data = value,
+                       .ack = SWD_ACK_WAIT,
+                       .parity_error = false};
+
+    return swd_transaction(&frame);
+}
+
+bool swd_read_ap(uint8_t addr, uint32_t* value) {
+    swd_frame_t frame {.is_ap = true,
+                       .is_read = true,
+                       .addr = addr,
+                       .data = 0,
+                       .ack = SWD_ACK_WAIT,
+                       .parity_error = false};
+
+    // 1. Initiate the AP read transaction to push the address into the pipeline
+    if(!swd_transaction(&frame)) {
+        return false;
+    }
+
+    // 2. Read the DP RDBUFF register (0x0C) to capture the pipelined value
+    return swd_read_dp(0x0C, value);
+}
+
+bool swd_write_ap(uint8_t addr, uint32_t value) {
+    swd_frame_t frame {.is_ap = true,
+                       .is_read = false,
+                       .addr = addr,
+                       .data = value,
+                       .ack = SWD_ACK_WAIT,
+                       .parity_error = false};
+
+    return swd_transaction(&frame);
+}
+
+bool swd_clear_errors(void) {
+    // The DP ABORT Register is located at address 0x00 (Write-Only).
+    // To clear the distinct sticky error flags, we write 1 to their respective
+    // clear bits:
+    //
+    // Bit 4: ORUNDETECTCLR -> Clears the Sticky Overrun error flag
+    // Bit 3: WDERRCLR  -> Clears the Sticky Write Data error flag
+    // Bit 2: STKERRCLR -> Clears the Sticky Error flag (most common protocol
+    // fault)
+    // Bit 1: STKCMPCLR -> Clears the Sticky Compare error flag
+    //
+    // Binary: 0b0001'1110 = Hex: 0x1E
+    constexpr uint32_t clear_all_faults_mask = 0x1E;
+
+    // Execute a standard DP write to the ABORT register
+    return swd_write_dp(0x00, clear_all_faults_mask);
+}
+
+bool swd_write_mem32(uint32_t address, uint32_t value) {
+    // 1. Configure CSW (AP Reg 0x00) for a standard 32-bit word access.
+    // 0x22000002 sets Size=32-bit, Auto-increment=OFF, MasterType=Debug access.
+    if(!swd_write_ap(0x00, 0x22000002)) return false;
+
+    // 2. Load the target physical memory address into TAR (AP Reg 0x04)
+    if(!swd_write_ap(0x04, address)) return false;
+
+    // 3. Write the payload value to DRW (AP Reg 0x0C).
+    // This triggers the physical bus write inside the Gecko core.
+    return swd_write_ap(0x0C, value);
+}
+
+bool swd_read_mem32(uint32_t address, uint32_t* value) {
+    // 1. Configure CSW for 32-bit read access
+    if(!swd_write_ap(0x00, 0x22000002)) return false;
+
+    // 2. Load the target memory address into TAR
+    if(!swd_write_ap(0x04, address)) return false;
+
+    // 3. Initiate the read from DRW.
+    // Note: Because AP reads are pipelined, this returns the *previous* data,
+    // but pushes our requested address into the read buffer.
+    return swd_read_ap(0x0C, value);
+}
